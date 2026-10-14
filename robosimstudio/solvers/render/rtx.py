@@ -276,6 +276,7 @@ def _viewer_class():
             self._deformables = dict(deformables or {})
             self._deformable_cache: dict[str, tuple] | None = None
             self.live_paths: dict[int, str] = {}
+            self.pending_colors: dict[str, np.ndarray] = {}
             super().__init__(**kwargs)
 
         # -- stage ------------------------------------------------------------
@@ -444,16 +445,20 @@ def _viewer_class():
                 cache[name] = (idx, tris, tris_np, out, uvs)
             return cache
 
-        def _write_poses(self) -> None:
-            """Push the rig's camera transforms into the live renderer."""
-            from ovrtx import Semantic
-
-            self._rtx.write_attribute(
+        def _update_ovrtx_camera(self):
+            """Write rig updates before Newton seals this frame's runtime stage."""
+            super()._update_ovrtx_camera()
+            if self._rtx is None:
+                return
+            self._write_runtime_attribute(
                 prim_paths=[self.camera_path(i) for i in range(len(self.rig))],
                 attribute_name="omni:xform",
-                tensor=np.stack([_usd_camera_matrix(self.poses[spec.name]) for spec in self.rig]),
-                semantic=Semantic.XFORM_MAT4x4,
+                values=np.stack([_usd_camera_matrix(self.poses[spec.name]) for spec in self.rig]),
+                is_matrix=True,
             )
+            for path, color in self.pending_colors.items():
+                self._write_runtime_array_attribute(path, "primvars:displayColor", color)
+            self.pending_colors.clear()
 
         def step_rig(self) -> None:
             """One tracer pass over every product, synchronously.
@@ -463,9 +468,11 @@ def _viewer_class():
             makes an observation a frame stale, which for a camera that just
             moved is a picture of where it used to be.
             """
+            kwargs = {"ordinal": self._ovstage_ordinal} if self._use_ovstage else {}
             self.outputs = self._rtx.step(
                 render_products={self.product_path(i) for i in range(len(self.rig))},
                 delta_time=1.0 / self.fps,
+                **kwargs,
             )
 
         def _render_and_display(self):
@@ -474,11 +481,10 @@ def _viewer_class():
             ``end_frame`` calls this after pushing the frame's transforms, which
             is the first moment ``self._rtx`` exists -- the renderer is created
             inside the ``_init_ovrtx`` that the same call triggers -- and so the
-            first moment the camera poses can be written.
+            first moment the rig can read the committed frame.
             """
             if self._rtx is None or self._should_close:
                 return
-            self._write_poses()
             self.step_rig()
 
     return _StudioViewerRTX
@@ -1249,7 +1255,9 @@ class RendererRTX(RendererBase):
         product = outputs[path]
         wanted = self.channels[cam.name]
         frame: dict[str, np.ndarray] = {}
-        for var_name, var in product.frames[0].render_vars.items():
+        for var_path, var in product.frames[0].render_vars.items():
+            # OVRTX 0.5 identifies outputs by their full RenderVar path.
+            var_name = var_path.rsplit("/", 1)[-1]
             with var.map(device=Device.CPU) as mapped:
                 arr = np.array(np.from_dlpack(mapped), copy=True)
             if var_name == "LdrColor" and "rgb" in wanted:
@@ -1288,12 +1296,13 @@ class RendererRTX(RendererBase):
             written = current
             if PALETTE_IS_DISPLAY:
                 written = np.asarray([srgb_to_linear(tuple(c)) for c in current], dtype=np.float32)
-            tensors = [
-                viewer._make_point3f_dltensor(written[i : i + 1])
-                for i in changed
-                if int(self.live_shapes[i]) in viewer.live_paths
-            ]
-            viewer._rtx.write_array_attribute(prim_paths=paths, attribute_name="primvars:displayColor", tensors=tensors)
+            viewer.pending_colors.update(
+                {
+                    viewer.live_paths[int(self.live_shapes[i])]: written[i : i + 1].copy()
+                    for i in changed
+                    if int(self.live_shapes[i]) in viewer.live_paths
+                }
+            )
         self._live_cache = current
 
     def render(self, state: newton.State) -> FrameSet:
@@ -1404,12 +1413,9 @@ class RendererRTX(RendererBase):
     def close(self) -> None:
         if self.viewer is not None:
             try:
-                if getattr(self.viewer, "_rtx", None) is not None:
-                    self.viewer._rtx.destroy()
-                    self.viewer._rtx = None
-            except Exception:
-                pass
-            try:
+                # The last rig frame owns native step results. Release them
+                # while their renderer is alive, before Newton destroys it.
+                self.viewer.outputs = None
                 self.viewer.close()
             except Exception:
                 pass

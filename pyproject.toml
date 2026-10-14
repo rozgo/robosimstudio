@@ -27,7 +27,7 @@ dependencies = [
     # [sim] carries mujoco and mujoco-warp, which the default rigid solver needs
     # at runtime; newton imports them lazily, so a bare "newton" resolves and
     # then cannot step an arm.
-    "newton[sim]>=1.6,<1.7",
+    "newton[sim]>=1.6.1,<1.7",
     "numpy",
     # ModelBuilder.approximate_meshes(method="convex_hull") imports scipy.spatial
     # at call time, and every scene with a hand in it calls it.
@@ -72,7 +72,9 @@ genesis = [
 # pyglet.math at call time. A checkout run through uv installs it without being
 # asked -- the `rtx` group below -- and a GPU without RT cores renders with
 # `tiled` either way (robosimstudio.solvers.render.choose_renderer).
-rtx = ["ovrtx==0.4.0.*", "usd-core", "pyglet"]
+# Newton 1.6.1 uses OVStage for OVRTX 0.4+. These paired releases include the
+# runtime scene-update fixes needed by cameras, deformables and live colors.
+rtx = ["ovrtx==0.5.1.*", "ovstage==0.2.1.*", "usd-core", "pyglet"]
 # USD scene import.
 usd = ["newton[importers]"]
 # The Feetech motor bus behind leader-arm teleoperation.
@@ -183,7 +185,8 @@ explicit = true
 
 # The graph runtime also requires its own simulator stack (LIBERO, robosuite,
 # gym, bddl) and pins mujoco 3.6. Nothing robosimstudio_policy_agent imports from it
-# loads any of those, so they are dropped, and mujoco follows Newton.
+# loads any of those, so they are dropped. Keep the MuJoCo override aligned
+# with Newton 1.6.x's [sim] requirement; newer MuJoCo-Warp APIs are incompatible.
 [tool.uv]
 default-groups = ["rtx"]
 override-dependencies = [
