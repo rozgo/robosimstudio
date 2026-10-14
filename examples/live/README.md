@@ -68,10 +68,13 @@ was 0.0 mm: this demonstrated sliding, with no measurable bending.
 
 The default provider is `XiaomiMiMo/MiMo-V2.6-Pro-RL:novita`. Pricing is fetched
 at startup. Before each request, the server reserves a conservative allowance
-for the full input and up to 16,384 output tokens, including reasoning. It then
+for the full input and up to 32,768 output tokens, including reasoning. It then
 records the provider's actual token usage. Estimated costs price cached input
 at the full rate, so the HF invoice can be lower. Unknown usage keeps its
 reservation, and a truncated response never executes partial tool calls.
+The output allowance is configurable with `--max-output-tokens`; it is a ceiling,
+not a target. Requests have a 30-minute overall deadline and a 60-second network
+idle timeout. There is no automatic retry after truncation or a timeout.
 
 `--budget` is the total limit for the saved session. Restarting preserves both
 spending and the conversation; it never replays robot actions:

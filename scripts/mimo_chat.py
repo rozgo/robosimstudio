@@ -31,7 +31,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENE = ROOT / "examples/live/scene.py"
 SOCKET = ROOT / "examples/live/run/ctl.sock"
 MODEL = "XiaomiMiMo/MiMo-V2.6-Pro-RL:novita"
-DEFAULT_MAX_OUTPUT_TOKENS = 16384
+DEFAULT_MAX_OUTPUT_TOKENS = 32768
+REQUEST_TIMEOUT_SECONDS = 1800
 SYSTEM = """You are the coding agent operating a real running robot simulation.
 The operator sends requests through this chat. You alone
 choose the scene edits and robot actions. Work through tools; do not claim actions
@@ -52,6 +53,8 @@ report it and use the evidence to repair the routine, within the request limit.
 For a new task, add a new routine and a matching measured outcome; the original
 pad-placement check only applies to the original push task. Keep the bench, object
 starting pose, dimensions and physics unchanged unless the user asks to edit them.
+Keep each new routine focused on one short, measurable physical attempt. Inspect
+its result before writing fallback experiments.
 
 Scene API: import robosimstudio as rss. scene = rss.Scene(cell='bench_075',
 physics=rss.MUJOCO_500HZ). scene.add(rss.box(name=..., half=(...), at=(...),
@@ -481,8 +484,8 @@ class Agent:
                 row["http_status"] = response.status
                 row["request_id"] = response.headers.get("x-request-id")
                 for line in response:
-                    if time.monotonic() - started > 600:
-                        raise TimeoutError("Model request exceeded 600 seconds.")
+                    if time.monotonic() - started > REQUEST_TIMEOUT_SECONDS:
+                        raise TimeoutError(f"Model request exceeded {REQUEST_TIMEOUT_SECONDS} seconds.")
                     if not line.startswith(b"data:"):
                         continue
                     raw = line[5:].strip()

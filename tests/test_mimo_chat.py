@@ -162,6 +162,63 @@ class TestBudget(unittest.TestCase):
 
 
 class TestResponseLimits(unittest.TestCase):
+    def test_slow_complete_stream_reassembles_tool_arguments_and_excludes_private_reasoning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent.__new__(Agent)
+            agent.out = Path(directory)
+            agent.budget = Budget(agent.out / "usage.json", {"input": 0.435, "output": 0.87}, 0.25)
+            agent.max_output_tokens = 32768
+            agent.messages = [{"role": "user", "content": "Move the cube."}]
+            agent.token = "test-credential"
+            agent.emit = mock.Mock()
+            events = [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "reasoning_content": "private test reasoning",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call1",
+                                        "function": {"name": "run_", "arguments": '{"name":'},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [{"index": 0, "function": {"name": "routine", "arguments": '"push"}'}}]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 18000},
+                },
+            ]
+            response = io.BytesIO(
+                b"".join(b"data: " + json.dumps(e).encode() + b"\n" for e in events) + b"data: [DONE]\n"
+            )
+            response.status, response.headers = 200, {}
+            # A valid long response must survive the former ten-minute deadline.
+            with (
+                mock.patch("scripts.mimo_chat.urllib.request.urlopen", return_value=response),
+                mock.patch("scripts.mimo_chat.time.monotonic", side_effect=[0, 1, 700, 701, 702]),
+            ):
+                message = agent.completion()
+            call = message["tool_calls"][0]
+            self.assertEqual(call["id"], "call1")
+            self.assertEqual(call["function"]["name"], "run_routine")
+            self.assertEqual(json.loads(call["function"]["arguments"]), {"name": "push"})
+            self.assertNotIn("private test reasoning", (agent.out / "response_001.json").read_text())
+            self.assertNotIn("private test reasoning", str(agent.emit.call_args_list))
+            self.assertEqual(agent.budget.reserved, 0)
+            self.assertGreater(agent.budget.spent, 0)
+
     def test_truncated_tool_call_is_charged_but_never_executed(self):
         with tempfile.TemporaryDirectory() as directory:
             agent = Agent.__new__(Agent)
