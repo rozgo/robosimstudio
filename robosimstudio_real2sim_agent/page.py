@@ -2,8 +2,8 @@
 """The studio's page with a ``Live`` folder on top, held still between commands.
 
 The folder is built *first*, because viser sorts the sidebar by creation
-order and the page is rebuilt from scratch on every ``adopt`` (teardown resets
-the GUI) -- so it is rebuilt here, on every ``build_gui``, and the server
+order and the controls are rebuilt on every ``adopt`` -- so it is rebuilt
+here, on every ``build_gui``, and the server
 rewrites its readouts straight after. Markdown rather than text boxes: a text
 box is one narrow line and truncates, and these are the two readouts the page
 is for -- what is loaded and when, and the traceback when a rebuild did not
@@ -13,12 +13,19 @@ studio's own ``set_paused`` keeps the two truthful. While a routine plays the
 page's own stepping is held regardless (:meth:`LiveSession.steps_held`), and
 both Reset buttons -- this folder's and the Simulation folder's -- go through
 the one :meth:`LiveSession.reset_now`.
+
+The controls share one headerless owner so replacing them preserves the
+client's drawer layout. Scene replacement is sent with its first posed frame
+in one atomic batch; camera display preferences survive the replacement.
 """
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from robosimstudio.sim.draw import title_page
 from robosimstudio_studio.session import StudioConfig, StudioSession
 
 if TYPE_CHECKING:
@@ -36,6 +43,8 @@ class LiveSession(StudioSession):
         self.host = host
         self.host_folder: Any = None
         self.host_widgets: dict[str, Any] = {}
+        self.page_root: Any = None
+        self._theme_configured = False
         super().__init__(sim, config=config)
 
     def adopt(self, sim: Any, *, label: str = "", episode: int = 0) -> None:
@@ -43,7 +52,24 @@ class LiveSession(StudioSession):
         # lands; `--hold` lands it paused instead, and `ctl run N` steps a
         # held page.
         self.paused = self.host.hold
-        super().adopt(sim, label=label, episode=episode)
+        # These are viewing preferences, not properties of a new scene. A
+        # hidden frustum must not flash back on whenever an agent saves a file.
+        if self.live is not None:
+            self.config = replace(self.config, live=self.live.live, live_frustums=self.live.show_frustums)
+        # Set the opening view before new clients connect. Never move an
+        # existing client's camera when the scene under it is replaced.
+        if self.env is None and sim.cameras:
+            camera = sim.cameras[0]
+            self.server.initial_camera.position = camera.eye
+            self.server.initial_camera.look_at = camera.look_at
+            self.server.initial_camera.fov = math.radians(camera.fov_y)
+        # The build already happened with the old view intact. Buffer teardown,
+        # new geometry, lighting, controls and the first posed frame together,
+        # so clients do not see the empty scene between them.
+        with self.server.atomic():
+            super().adopt(sim, label=label, episode=episode)
+            sim.sync()
+            self.draw()
 
     def steps_held(self) -> bool:
         """While a routine plays it steps the scene itself; the studio's own step would double it."""
@@ -56,8 +82,32 @@ class LiveSession(StudioSession):
         self.host.resets += 1
         return super().reset_now()
 
+    def clear_gui(self) -> None:
+        # Removing our controls leaves each client's drawer width, position
+        # and collapsed state intact. gui.reset() resets all of those too.
+        if self.page_root is not None:
+            self.page_root.remove()
+            self.page_root = None
+
+    def configure_gui(self) -> None:
+        if not self._theme_configured:
+            super().configure_gui()
+            self.server.gui.configure_theme(
+                control_layout="floating", dark_mode=self.config.dark_mode, show_logo=False, show_share_button=False
+            )
+            self._theme_configured = True
+
     def build_gui(self) -> None:
+        # A headerless owner lets us retire controls without resetting the
+        # client's layout. Every panel, including the Live folder, lives here.
+        self.page_root = self.server.gui.add_folder(None)
+        with self.page_root:
+            self._build_live_gui()
+
+    def _build_live_gui(self) -> None:
         gui = self.server.gui
+        gui.set_panel_label("Simulation")
+        title_page(self.server, "Live simulation")
         self.host_folder = gui.add_folder("Live")
         self.buttons: dict[str, Any] = {}
         self.board: dict[str, Any] = {}

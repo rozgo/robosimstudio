@@ -5,14 +5,76 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
 
 from robosimstudio_real2sim_agent import server as server_mod
+from robosimstudio_real2sim_agent.page import LiveSession
 from robosimstudio_real2sim_agent.server import LiveServer
+from robosimstudio_studio.session import StudioConfig, StudioSession
 
 TIER = "fast"
+
+
+class RebuildPresentation(unittest.TestCase):
+    def test_retiring_controls_does_not_reset_client_layout(self) -> None:
+        session = LiveSession.__new__(LiveSession)
+        session.server = mock.MagicMock()
+        root = session.page_root = mock.Mock()
+        session.clear_gui()
+        root.remove.assert_called_once()
+        session.server.gui.reset.assert_not_called()
+        self.assertIsNone(session.page_root)
+
+    def test_rebuilding_controls_does_not_reapply_opening_layout(self) -> None:
+        session = LiveSession.__new__(LiveSession)
+        session.server = mock.MagicMock()
+        session._theme_configured = False
+        session.config = StudioConfig()
+        with mock.patch.object(StudioSession, "configure_gui") as configure:
+            session.configure_gui()
+            session.configure_gui()
+        configure.assert_called_once()
+        session.server.gui.configure_theme.assert_called_once()
+
+    def test_rebuild_keeps_camera_preferences_and_sends_a_complete_frame(self) -> None:
+        session = LiveSession.__new__(LiveSession)
+        session.host = SimpleNamespace(hold=True)
+        session.env = object()
+        session.config = StudioConfig(live=True, live_frustums=True)
+        session.live = SimpleNamespace(live=False, show_frustums=False)
+        session.server = mock.MagicMock()
+        session.draw = mock.Mock()
+        sim = mock.Mock()
+        order = []
+        session.server.atomic.return_value.__enter__.side_effect = lambda: order.append("begin")
+        session.server.atomic.return_value.__exit__.side_effect = lambda *_: order.append("end")
+        session.draw.side_effect = lambda: order.append("draw")
+        sim.sync.side_effect = lambda: order.append("sync")
+        with mock.patch.object(StudioSession, "adopt", side_effect=lambda *a, **kw: order.append("adopt")):
+            session.adopt(sim)
+        self.assertFalse(session.config.live)
+        self.assertFalse(session.config.live_frustums)
+        self.assertEqual(order, ["begin", "adopt", "sync", "draw", "end"])
+        # An existing user's viewpoint is untouched by scene changes.
+        self.assertEqual(session.server.initial_camera.mock_calls, [])
+
+    def test_first_scene_sets_the_opening_view(self) -> None:
+        session = LiveSession.__new__(LiveSession)
+        session.host = SimpleNamespace(hold=True)
+        session.env = session.live = None
+        session.config = StudioConfig()
+        session.server = mock.MagicMock()
+        session.draw = mock.Mock()
+        camera = SimpleNamespace(eye=(1.8, 0.6, 1.7), look_at=(0.35, 0, 1.02), fov_y=42)
+        sim = mock.Mock(cameras=[camera])
+        with mock.patch.object(StudioSession, "adopt"):
+            session.adopt(sim)
+        self.assertEqual(session.server.initial_camera.position, camera.eye)
+        self.assertEqual(session.server.initial_camera.look_at, camera.look_at)
+        self.assertAlmostEqual(session.server.initial_camera.fov, 0.7330382858)
 
 
 def _bare_server() -> LiveServer:

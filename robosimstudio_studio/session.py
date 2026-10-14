@@ -842,8 +842,12 @@ class StudioSession:
         self.leader_arm = None
         # Cheaper and more certain than removing widgets one at a time, and the
         # only GUI on this page is the panels' own.
-        self.server.gui.reset()
+        self.clear_gui()
         self.pause_box = None
+
+    def clear_gui(self) -> None:
+        """Remove the old controls; live pages may keep their surrounding layout."""
+        self.server.gui.reset()
 
     def _push_finishes(self, sim) -> None:
         """Hand the scene's materials to the page, so it shades what RTX shades.
@@ -1170,9 +1174,13 @@ class StudioSession:
             # environment underneath it may be swapped for another task.
             self.lighting.build(gui)
 
+    def configure_gui(self) -> None:
+        """Apply the page's opening theme and layout."""
+        self.server.gui.configure_theme(control_layout="collapsible", dark_mode=self.config.dark_mode)
+
     def build_gui(self) -> None:
         gui = self.server.gui
-        gui.configure_theme(control_layout="collapsible", dark_mode=self.config.dark_mode)
+        self.configure_gui()
         # First in the sidebar, outside any fold, and **hidden until something is
         # held**. Taking hold of a thing is one click on the thing itself, so
         # letting go should not be a button two folds deep in a panel named

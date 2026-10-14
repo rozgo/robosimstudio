@@ -55,6 +55,7 @@ def config_from_args(args: argparse.Namespace) -> StudioConfig:
         panels="all",
         render_every=1,
         live=args.camera_view,
+        live_frustums=False,
         show_scenery=not args.hide_scenery,
         dark_mode=args.dark,
         out=str(Path(args.run_dir) / "studio"),
