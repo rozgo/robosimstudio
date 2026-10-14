@@ -24,11 +24,78 @@ claude --permission-mode acceptEdits        # Claude Code; edits go through with
 codex -a on-request -s workspace-write      # or Codex; the sandbox may write here and reach the socket
 ```
 
-The page opens on the starter scene: two arms on a bare floor. On a remote GPU
+The page opens on a shared tabletop: a Panda arm, red cube, blue cloth, orange
+cable, purple soft block and a target pad. On a remote GPU
 box, pick an idle card with `CUDA_VISIBLE_DEVICES` and use `--share` or an SSH
 tunnel (`ssh -L 8080:localhost:8080 <box>`). The page listens on all interfaces
 (viser's default), so on a shared network firewall the port or use the tunnel.
 `./ctl quit` stops the server.
+
+## A model operating through chat
+
+The local chat page sends messages to MiMo through Hugging Face Inference
+Providers. The model reads the scene and live state, edits `scene.py`, and runs
+the routines it chooses. The browser displays the model's response, tool results
+and estimated spending alongside the live simulation.
+
+From the repository root, with `HF_TOKEN` already in the environment:
+
+```bash
+examples/live/ctl up --hold
+uv run python scripts/mimo_chat.py --out outputs/my-chat --budget 1
+```
+
+Open the printed chat URL (normally `http://127.0.0.1:8092`) and send, for example:
+
+> Inspect the table, choose a short interaction with one object, and carry it
+> out using robot contact. Keep everything on the table and measure the result.
+
+The model receives text observations: body and particle positions, bounds,
+sampled geometry, solver ownership and routine outcomes. It does not receive
+camera images. Its source edits rebuild and reset the scene; the page keeps
+the current viewpoint and drawer layout while the replacement arrives.
+
+The scene uses Newton's two-way proxy coupling between MuJoCo for the robot
+and VBD for the cube, cable, cloth and soft block. Pushing and cable bending
+are available; reliable cloth pinching and cube lifting require a different
+setup. The `CAPABILITIES` dictionary records these limits for the agent. The
+included `poke` routine is an unsuccessful experiment: it moved the soft block
+but did not meet its compression check. Retaining failed checks makes that
+limitation inspectable rather than presenting every routine as a success.
+In the recorded follow-up, the model added `nudge_cable` and moved the cable
+55.6 mm sideways while all four objects stayed on the bench. Chord shortening
+was 0.0 mm: this demonstrated sliding, with no measurable bending.
+
+The default provider is `XiaomiMiMo/MiMo-V2.6-Pro-RL:novita`. Pricing is fetched
+at startup. Before each request, the server reserves a conservative allowance
+for the full input and up to 16,384 output tokens, including reasoning. It then
+records the provider's actual token usage. Estimated costs price cached input
+at the full rate, so the HF invoice can be lower. Unknown usage keeps its
+reservation, and a truncated response never executes partial tool calls.
+
+`--budget` is the total limit for the saved session. Restarting preserves both
+spending and the conversation; it never replays robot actions:
+
+```bash
+uv run python scripts/mimo_chat.py --out outputs/my-chat --budget 1 --resume
+```
+
+Raising an existing limit also requires `--allow-budget-increase`. Each change
+is recorded in `usage.json`. The output directory retains the request/response
+records, tool events, source revisions and usage ledger; credentials and private
+model reasoning are excluded.
+
+To record the actual chat and simulation in a separate visible browser:
+
+```bash
+uv run --group media python scripts/record_mimo_chat.py --out outputs/my-capture
+# Interact through the chat, then finish the capture:
+touch outputs/my-capture/stop-recording
+```
+
+The recorder submits no messages and invokes no robot tools. It saves the raw
+capture, screenshots, timing metadata and `experience.mp4` at real elapsed
+speed. Only browser startup is trimmed. Each capture needs a fresh directory.
 
 Both agents read the procedure from [`AGENTS.md`](../../AGENTS.md), so the
 prompt only has to say what to build. Start each prompt below with this

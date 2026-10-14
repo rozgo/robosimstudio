@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live robot lab</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #101923; color: #eaf0f6; font-family: Inter, system-ui, sans-serif; }
+header { height: 84px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid #2b3848; }
+.brand { font-size: 24px; letter-spacing: -.6px; font-weight: 650; }
+.brand span { color: #91a8bd; font-weight: 450; }
+.connection { font-size: 14px; color: #a7c3c4; display: flex; align-items: center; gap: 9px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #64e0be; }
+main { display: grid; grid-template-columns: 550px minmax(0,1fr); height: calc(100vh - 130px); gap: 20px; padding: 20px 24px 0; }
+.chat { min-height: 0; display: flex; flex-direction: column; }
+.intro { padding: 0 8px 16px; }
+.eyebrow { text-transform: uppercase; letter-spacing: 1.7px; font-size: 11px; font-weight: 650; color: #83d8c8; }
+h1 { margin: 8px 0; font-size: 27px; font-weight: 550; letter-spacing: -.6px; }
+.intro p { color: #91a8bd; margin: 0; font-size: 13px; }
+#conversation { flex: 1; min-height: 0; overflow: auto; padding: 0 8px 12px; scroll-behavior: smooth; }
+.message { margin: 15px 0; line-height: 1.5; font-size: 17px; }
+.label { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.3px; font-weight: 650; color: #94a9be; }
+.message.user .text { background: #253c50; border: 1px solid #3c566d; padding: 15px 17px; border-radius: 12px 12px 3px 12px; }
+.message.assistant .label { color: #83d8c8; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant .text { white-space: normal; color: #d8e3ec; line-height: 1.65; }
+.assistant .text > :first-child { margin-top: 0; }
+.assistant .text > :last-child { margin-bottom: 0; }
+.assistant .text p { margin: 0 0 14px; }
+.assistant .text strong { color: #f3f8fc; font-weight: 650; }
+.assistant .text ul, .assistant .text ol { padding-left: 23px; margin: 12px 0 18px; }
+.assistant .text li { padding-left: 4px; margin: 10px 0; }
+.assistant .text li::marker { color: #83d8c8; }
+.assistant .text li p { margin: 6px 0; }
+.assistant .text :is(h1,h2,h3,h4,h5,h6) { font-size: 19px; line-height: 1.35; margin: 20px 0 10px; color: #f3f8fc; }
+.assistant .text code { font: .83em ui-monospace, SFMono-Regular, monospace; background: #20303e; color: #b6e7dc; border-radius: 4px; padding: 2px 5px; }
+.assistant .text pre { max-height: none; overflow-x: auto; white-space: pre; padding: 14px; border: 1px solid #304357; border-radius: 8px; background: #131f2b; line-height: 1.6; }
+.assistant .text pre code { background: none; padding: 0; font-size: 13px; }
+.assistant .text blockquote { border-left: 2px solid #69bba8; margin: 14px 0; padding-left: 14px; color: #a9bdcf; }
+.assistant .text a { color: #8edecb; text-underline-offset: 3px; }
+.assistant .text table { display: block; overflow-x: auto; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+.assistant .text :is(th,td) { text-align: left; padding: 9px 11px; border: 1px solid #304357; }
+.assistant .text th { background: #20303e; }
+.assistant .text hr { border: 0; border-top: 1px solid #304357; margin: 20px 0; }
+.tool { margin: 10px 0; background: #172330; border: 1px solid #304357; border-radius: 9px; padding: 11px 13px; font-size: 13px; }
+.tool .title { font-weight: 600; color: #b6cbdc; }
+.tool .summary { color: #95aabd; margin-top: 6px; white-space: pre-wrap; line-height: 1.5; }
+.tool.ok { border-left: 3px solid #64cdb4; }
+.tool.error { border-left: 3px solid #f1a070; }
+.tool details { margin-top: 7px; color: #768da5; font-size: 11px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font-size: 11px; }
+#phase { min-height: 35px; font-size: 13px; color: #91a8bd; padding: 8px; }
+#phase.busy { color: #7fe2cc; }
+form { display: flex; align-items: end; gap: 8px; padding: 10px; background: #192636; border: 1px solid #40556c; border-radius: 12px; }
+textarea { background: transparent; border: 0; color: #f2f6fa; font: inherit; font-size: 16px; resize: none; flex: 1; outline: none; height: 75px; line-height: 1.45; }
+button { background: #87dfc9; color: #122f2c; font: inherit; font-size: 14px; font-weight: 650; border: 0; border-radius: 7px; padding: 12px 15px; cursor: pointer; }
+button:disabled { opacity: .35; cursor: default; }
+.meter { display: flex; align-items: center; justify-content: space-between; padding: 12px 8px 0; color: #95acbf; font-size: 12px; font-variant-numeric: tabular-nums; }
+#cost { color: #e2f4ed; font-size: 16px; }
+.viewport { min-width: 0; border: 1px solid #3b4d60; border-radius: 13px; overflow: hidden; position: relative; background: #e6e8ec; }
+iframe { display: block; border: 0; width: 100%; height: 100%; }
+footer { height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; font-size: 12px; color: #7d94a9; }
+#empty { color: #7d94a9; padding: 32px 10px; font-size: 15px; line-height: 1.6; }
+@media(prefers-reduced-motion:reduce) { #conversation { scroll-behavior: auto; } }
+@media(max-width:1100px) { main { grid-template-columns: 420px 1fr; } }
+</style>
+<header>
+  <div class="brand">Live robot lab</div>
+  <div class="connection"><span class="dot"></span> Live simulation · Connected agent</div>
+</header>
+<main>
+  <section class="chat">
+    <div class="intro"><div class="eyebrow">Live agent session</div><h1>Ask. Watch. Follow up.</h1><p>The agent chooses the scene edits and robot actions.</p></div>
+    <div id="conversation"><div id="empty">The simulator is connected.<br>Send a request to the agent to begin.</div></div>
+    <div id="phase">Connecting…</div>
+    <form id="form"><textarea id="prompt" aria-label="Message the agent" placeholder="Change the scene or ask the robot to move…"></textarea><button id="send" type="submit">Send</button></form>
+    <div class="meter"><span>Estimated spend <b id="cost">$0.000000</b></span><span id="budget">Limit $0.25</span><span id="requests">0 requests</span></div>
+  </section>
+  <section class="viewport"><iframe id="studio" src="__STUDIO_URL__" title="Live robot simulation"></iframe></section>
+</main>
+<footer><span>Existing push skill · Live model decisions · Tool results recorded</span><span id="tokens">0 input / 0 output tokens</span></footer>
+<!-- Pinned and integrity checked. A failed download leaves readable plain text. -->
+<script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js" integrity="sha384-rATToyt6602Jnq8c7w8HZwmyOUgPL7mzxX01FBWoV48ns/EgkakGozpES+PnaYOI" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.min.js" integrity="sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx" crossorigin="anonymous"></script>
+<script>
+let cursor=-1, busy=false, polling=false;
+const convo=document.querySelector('#conversation');
+const messages=new Map(), tools=new Map();
+const labels={inspect_scene:'Inspect live scene',read_scene:'Read scene.py',edit_scene:'Edit scene.py & rebuild',run_routine:'Run robot routine'};
+let follow=true;
+convo.addEventListener('scroll',()=>{follow=convo.scrollHeight-convo.scrollTop-convo.clientHeight<80;});
+function scroll(){if(follow)convo.scrollTop=convo.scrollHeight;}
+function renderMarkdown(body, source){
+  if(!window.marked || !window.DOMPurify){body.textContent=source;body.style.whiteSpace='pre-wrap';return;}
+  // Keep model output as prose, never executable HTML or remote images.
+  body.innerHTML=DOMPurify.sanitize(marked.parse(source,{gfm:true}),{
+    ALLOWED_TAGS:['p','br','strong','em','del','ul','ol','li','h1','h2','h3','h4','h5','h6','pre','code','blockquote','hr','table','thead','tbody','tr','th','td','a'],
+    ALLOWED_ATTR:['href','title','start'],ALLOW_DATA_ATTR:false,ALLOW_ARIA_ATTR:false
+  });
+  for(const link of body.querySelectorAll('a')){
+    if(!/^https?:\/\//i.test(link.getAttribute('href')||''))link.removeAttribute('href');
+    else {link.target='_blank';link.rel='noopener noreferrer';}
+  }
+}
+function message(role,text,id){
+  document.querySelector('#empty')?.remove();
+  const el=document.createElement('div');el.className='message '+role;
+  const label=document.createElement('div');label.className='label';label.textContent=role==='user'?'Operator':'Agent · live response';
+  const body=document.createElement('div');body.className='text';
+  if(role==='assistant')renderMarkdown(body,text);else body.textContent=text;
+  el.append(label,body);convo.append(el);const state={body,source:text};if(id!==undefined)messages.set(id,state);scroll();return state;
+}
+function event(e){
+  if(e.kind==='user')message('user',e.text);
+  if(e.kind==='delta'){
+    const m=messages.get(e.number)||message('assistant','',e.number);m.source+=e.text;renderMarkdown(m.body,m.source);scroll();
+  }
+  if(e.kind==='tool_start'){
+    const el=document.createElement('div');el.className='tool';
+    const title=document.createElement('div');title.className='title';title.textContent='↳ '+(labels[e.name]||e.name);
+    const summary=document.createElement('div');summary.className='summary';summary.textContent='Running…';
+    if(e.name==='edit_scene')summary.textContent=e.arguments.replacements.map(r=>r.old+' → '+r.new).join('\n').slice(0,550);
+    if(e.name==='run_routine')summary.textContent=e.arguments.name+' · actual simulation running';
+    const details=document.createElement('details');const toggle=document.createElement('summary');toggle.textContent='Tool arguments and result';
+    const pre=document.createElement('pre');pre.textContent=JSON.stringify(e.arguments,null,2);details.append(toggle,pre);el.append(title,summary,details);convo.append(el);
+    tools.set(e.call_id,{el,summary,pre,args:e.arguments});scroll();
+  }
+  if(e.kind==='tool_end'){
+    const t=tools.get(e.call_id);if(!t)return;const r=e.result;const failed=r.ok===false||r.metrics?.passed===false;
+    t.el.classList.add(failed?'error':'ok');
+    if(r.error)t.summary.textContent=r.error.slice(0,600);
+    else if(r.metrics){
+      if(typeof r.metrics.error_mm==='number')t.summary.textContent=(r.metrics.passed?'✓ Target reached':'Target missed')+' · '+r.metrics.error_mm+' mm from center\nResting drift '+r.metrics.drift_mm+' mm · '+r.seconds+' s elapsed';
+      else t.summary.textContent=(r.metrics.passed?'✓ Goal reached':'Goal not reached')+' · '+r.seconds+' s elapsed\n'+JSON.stringify(r.metrics,null,2);
+    }
+    else if(r.rebuilt)t.summary.textContent+='\n✓ Scene rebuilt · robot and objects reset';
+    else if(r.source)t.summary.textContent='Read '+r.source.split('\n').length+' lines of the current scene.';
+    else if(r.names)t.summary.textContent='Objects: '+r.names.join(', ')+'\nRoutines: '+r.routines.join(', ');
+    else t.summary.textContent=JSON.stringify(r).slice(0,450);
+    t.pre.textContent=JSON.stringify({arguments:t.args,result:r},null,2);scroll();
+  }
+  if(e.kind==='error')message('assistant','Stopped: '+e.text);
+  if(e.kind==='resumed'){
+    const el=document.createElement('div');el.className='tool';
+    el.textContent='Session restored · conversation and costs retained · '+e.max_output_tokens.toLocaleString()+' tokens available per response';
+    convo.append(el);scroll();
+  }
+}
+async function poll(){
+  if(polling)return;polling=true;
+  try{
+    const r=await fetch('/state?after='+cursor);if(!r.ok)throw new Error('Backend unavailable');const s=await r.json();
+    for(const e of s.events){event(e);cursor=e.id;}
+    busy=s.busy;window.agentState=s;document.querySelector('#send').disabled=busy;
+    document.querySelector('#phase').textContent=s.phase.replace('MiMo is thinking','Agent is thinking');document.querySelector('#phase').className=busy?'busy':'';
+    document.querySelector('#cost').textContent='$'+s.budget.spent.toFixed(6);
+    document.querySelector('#budget').textContent='Limit $'+s.budget.limit.toFixed(2)+(s.budget.reserved?' · request reserved':'');
+    document.querySelector('#requests').textContent=s.budget.requests+' requests';
+    document.querySelector('#tokens').textContent=s.budget.input_tokens.toLocaleString()+' input / '+s.budget.output_tokens.toLocaleString()+' output tokens'+(s.max_output_tokens?' · '+s.max_output_tokens.toLocaleString()+' per response':'');
+  }catch(e){document.querySelector('#phase').textContent='Connection error: '+e.message;}finally{polling=false;}
+}
+document.querySelector('#form').addEventListener('submit',async e=>{
+  e.preventDefault();const input=document.querySelector('#prompt');if(busy||!input.value.trim())return;
+  document.querySelector('#send').disabled=true;
+  try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:input.value})});const data=await r.json();if(!r.ok)throw new Error(data.error);input.value='';await poll();}
+  catch(e){document.querySelector('#phase').textContent=e.message;document.querySelector('#send').disabled=false;}
+});
+document.querySelector('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();document.querySelector('#form').requestSubmit();}});
+poll();setInterval(poll,300);
+</script>
+</html>
