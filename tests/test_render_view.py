@@ -244,7 +244,26 @@ class TestTheWorldModelSwitch(unittest.TestCase):
 
 
 class TestWhenTheRendererFails(unittest.TestCase):
-    """The rule picks ``rtx`` by a table of GPUs; a failure is the table being wrong."""
+    """Required photoreal views retain their frame; generic viewers can fall back."""
+
+    def test_required_photoreal_view_keeps_its_frame_and_reports_failure(self) -> None:
+        panel = _rtx_panel(require_photoreal=True)
+        panel.server.scene._node("/model/shapes/shape_1", visible=True)
+        panel._restore = unittest.mock.Mock()
+        panel._failed("render failed")
+        self.assertEqual((panel.mode, panel.backend), ("rtx", "rtx"))
+        self.assertFalse(panel.status()["ready"])
+        self.assertEqual(panel.status()["error"], "render failed")
+        self.assertFalse(panel.server.scene._handle_from_node_name["/model/shapes/shape_1"].visible)
+        panel._restore.assert_not_called()
+        panel.refresh()
+        self.assertIn("Photoreal view stopped", panel._readout.value)
+
+    def test_required_photoreal_close_preserves_the_frame_during_rebuild(self) -> None:
+        panel = _rtx_panel(require_photoreal=True)
+        panel._restore = unittest.mock.Mock()
+        panel.close()
+        panel._restore.assert_not_called()
 
     def test_the_machines_pick_falls_back_to_tiled(self) -> None:
         panel = _rtx_panel()

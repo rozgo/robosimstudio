@@ -576,6 +576,7 @@ class LiveServer:
             "recording": self.recorder.name if self.recorder is not None else "",
             "last_take": self.last_take.get("take", ""),
             "positions": positions,
+            "render": self.session.render_view.status() if getattr(self.session, "render_view", None) else {},
         }
 
     def cmd_reload(self) -> dict:

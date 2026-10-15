@@ -40,9 +40,9 @@ from text alone. Give concise progress updates before edits or motion and a brie
 measured result afterward. Use concise Markdown with short paragraphs or bullets.
 Do the requested work without asking for confirmation.
 
-Read the scene and inspect it before changing it. The starter already supplies a
-working physical push skill, which you may reuse and modify. There are no preset
-stages. You can edit any part of scene.py with exact replacements. Batch related
+Read the scene and inspect it before changing it. Use the helpers supplied by the
+current scene; read its CAPABILITIES and the observed solver ownership. You can
+edit any part of scene.py with exact replacements. Batch related
 edits into one save. Saving rebuilds the scene and resets the robot and objects; state
 this plainly when you do it. Preserve the camera and existing physical outcome checks.
 Do not change measurements to manufacture success. Verify the result after action.
@@ -61,33 +61,35 @@ physics=rss.MUJOCO_500HZ). scene.add(rss.box(name=..., half=(...), at=(...),
 mass=..., friction=..., color=(r,g,b))). rss.slab is a fixed pad; collide=False
 makes a visual target. Scene at= coordinates are metres relative to the bench
 surface, whose world origin is (0.6,0,0.75). sim['cube'].position is world XYZ.
-For THIS camera, positive Y reads as right, negative Y as left. The cube starts
-at surface (-0.15,0,0.026). inspect_scene returns the actual bench dimensions.
+inspect_scene returns the actual bench dimensions, arm names and tool poses.
 The current scene may also contain cloth, cable and soft bodies. Read its source
 and inspect_scene's objects and physics fields: these are actual live particle
 and body positions and the solver manifest. Cloth and soft blocks have particle_q,
 not a single rigid position. For cable use sim.state.body_q.numpy()[sim['cable'].bodies,:3]
 for all capsule centres; sim['cable'].position is only its first capsule.
-Scene CAPABILITIES describes the available contact behavior. The shared table uses
-two-way proxy coupling: robot on MuJoCo, all free objects on VBD. It supports
-pushing and cable bending, but reliable cloth pinching and rigid cube lifting are
-not supported by that arrangement. Do not change solvers to make a task pass.
+Scene CAPABILITIES describes the available contact behavior. Rigid objects in
+the same MuJoCo island as the arms can be grasped by physical finger friction.
+VBD cloth and cable across proxy coupling support pushing and bending; reliable
+cloth pinching is not supported. Do not change solvers to make a task pass.
 Choose feasible contact motions; report limitations and actual deformation.
 
-The existing push skill uses reach/grip/wait from robosimstudio_studio.routine.
+Motion helpers come from robosimstudio_studio.routine.
 reach(session, arm, world_xyz, quaternion_xyzw=None, speed=metres_per_second)
 smoothly moves the hand using IK; grip(session,arm,1.0) closes it. A generator
-must call panel.drain(), sim.step_teleop(), then yield on every control step.
-routines={'push':push} creates the Run command. The supplied routine returns home
-and measures cube error and resting drift with outcome(sim). Preserve that check.
-For additional tasks, define outcomes={'push':outcome, 'new_name':new_outcome}.
+must call panel.drain() for each arm, sim.step_teleop(), then yield on every
+control step; use the scene's drive helper when provided. Define the entry point
+with explicit parameters: def task(sim, session). The runner injects session only
+when that parameter is named in the signature. routines={'task':task} creates
+the Run command. Clear the task's measurement dictionary at the start of each
+attempt so stale results cannot pass a later failed run. Preserve existing
+outcome checks and register each new one in outcomes={'task':task_outcome}.
 run_routine measures outcomes[name](sim), falling back to outcome(sim). Return
 actual positions and task-specific measurements, with a boolean passed field.
 
 You receive simulator state as text, not camera vision. The live browser view is
 for the operator; do not claim you saw an image. Tools execute synchronously, including
 waiting for rebuilds and routines. Do not poll a tool that already completed.
-Do not claim a successful push unless run_routine reports actual measured success.
+Do not claim success unless run_routine reports actual measured success.
 Keep replies short and do not expose private reasoning. You have at most 10 model
 requests per user turn. The backend enforces token and session spending limits.
 """
@@ -557,6 +559,11 @@ class Agent:
         result.update(
             self.read_value("__import__('scripts.mimo_chat', fromlist=['observe_objects']).observe_objects(sim)")
         )
+        result["arms"] = self.read_value(
+            "{name: {'tcp_world': panel.ik.ee_pose(sim.state)[0], "
+            "'quat_xyzw': panel.ik.ee_pose(sim.state)[1], 'home': panel.ik.home_pose} "
+            "for name, panel in session.arms.items()}"
+        )
         return result
 
     def dispatch(self, name, args):
@@ -604,13 +611,13 @@ class Agent:
             if not reply.get("ok"):
                 return reply
             began = time.monotonic()
-            while time.monotonic() - began < 120:
+            while time.monotonic() - began < 600:
                 time.sleep(0.25)
                 status = self.ctl("status")
                 if not status["playing"]:
                     result = {
                         "ok": not bool(status["last_error"]),
-                        "motion_completed": True,
+                        "motion_completed": not bool(status["last_error"]),
                         "seconds": round(time.monotonic() - began, 2),
                         "before": before,
                         "after": self.inspect(),
@@ -628,7 +635,7 @@ class Agent:
                     return result
             # A timeout must not silently leave a routine running.
             self.ctl("reset")
-            raise TimeoutError("Routine exceeded 120 seconds and was stopped by reset.")
+            raise TimeoutError("Routine exceeded 600 seconds and was stopped by reset.")
         raise ValueError(f"Unknown tool or invalid arguments: {name}")
 
     def run(self):

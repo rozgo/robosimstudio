@@ -129,10 +129,14 @@ class PanelRenderView(Panel):
         passes: tuple[int, int] = (1, 6),
         fps: float = 30.0,
         max_load: float = 0.9,
+        require_photoreal: bool = False,
     ) -> None:
         super().__init__(session)
         self.backend, self._why = _choose(self.env)
-        self.mode = RTX if world_model and self.backend else RASTER
+        self.require_photoreal = require_photoreal
+        if require_photoreal:
+            self.backend, self._why = PUBLIC, "photoreal required"
+        self.mode = RTX if require_photoreal or (world_model and self.backend) else RASTER
         self.scale = float(scale)
         self.passes = (max(1, int(passes[0])), max(1, int(passes[1])))
         # A viewport is allowed almost the whole loop: unlike the camera panel's
@@ -156,8 +160,10 @@ class PanelRenderView(Panel):
         self._listening = False
         """Whether :meth:`_on_click` is on the server's click list; :meth:`close` takes it off."""
         self._note = ""
+        self._render_error = ""
         self.clean = False
         self.locked = ""
+        self._locked_control = None
         self._mode_request: str | None = None
         self._scale_request: float | None = None
         self._passes_request: tuple[int, int] | None = None
@@ -182,7 +188,7 @@ class PanelRenderView(Panel):
             self._state = gui.add_checkbox(
                 "World model",
                 initial_value=self.mode == RTX,
-                disabled=not self.backend,
+                disabled=self.require_photoreal or not self.backend,
                 hint=f"Renders with {self.backend}: {self._why}" if self.backend else self._why,
             )
             self._state.on_update(lambda _: setattr(self, "_mode_request", RTX if self._state.value else RASTER))
@@ -202,6 +208,7 @@ class PanelRenderView(Panel):
             # approximated rather than reproduced until you lock to it.
             names = ("free", *(c.name for c in self.env.cameras))
             locked = gui.add_dropdown("Lock to", options=names, initial_value="free")
+            self._locked_control = locked
             locked.on_update(
                 lambda _: setattr(self, "_locked_request", "" if locked.value == "free" else str(locked.value))
             )
@@ -228,6 +235,10 @@ class PanelRenderView(Panel):
     def drain(self) -> None:
         """Render the viewport. Main thread, once per control step."""
         self._service_requests()
+        if self.require_photoreal:
+            self._hide_model()
+            if self._render_error:
+                return
         if self.mode != RTX:
             self._restore()
             return
@@ -281,6 +292,9 @@ class PanelRenderView(Panel):
         """Act on what the callbacks assigned."""
         if self._mode_request is not None:
             wanted, self._mode_request = self._mode_request, None
+            if self.require_photoreal:
+                wanted = RTX
+                self._render_error = ""
             if wanted != self.mode:
                 self.mode = wanted
                 self._release()
@@ -327,7 +341,7 @@ class PanelRenderView(Panel):
             if self._cam_key.get(client.client_id) != key:
                 self._cam_key[client.client_id] = key
                 moved = True
-        return moved or self._dragging()
+        return moved or self._dragging() or bool(getattr(getattr(self.session, "host", None), "script", ()))
 
     def _dragging(self) -> bool:
         """Whether any panel's gizmo is mid-gesture.
@@ -469,7 +483,7 @@ class PanelRenderView(Panel):
         rgb = np.ascontiguousarray(frames[name]["rgb"][..., :3]).astype(np.uint8)
         if self._locked_camera() is not None:
             rgb = self._letterbox(rgb, client)
-        client.scene.set_background_image(rgb, format="jpeg", jpeg_quality=80)
+        client.scene.set_background_image(rgb, format="jpeg", jpeg_quality=95)
         return True
 
     def _failed(self, note: str) -> None:
@@ -480,6 +494,10 @@ class PanelRenderView(Panel):
         is cleared rather than left on over a frame that is not coming.
         """
         self._release()
+        if self.require_photoreal:
+            self._note = self._render_error = note
+            self._hide_model()
+            return
         self._restore()
         asked = self._why == "asked for" or self._why.startswith(ENV)
         if self.backend == PUBLIC and not asked:
@@ -566,9 +584,26 @@ class PanelRenderView(Panel):
                 pass
 
     # ------------------------------------------------------------- readouts
+    def status(self) -> dict:
+        """The renderer actually delivering frames, for capture readiness checks."""
+        return {
+            "mode": self.mode,
+            "backend": self.backend,
+            "ready": self.mode == RTX and self.backend == PUBLIC and self._frames > 0 and not self._render_error,
+            "frames": self._frames,
+            "fps": round(self._rate, 1),
+            "size": list(self._built[:2]) if self._built else None,
+            "error": self._render_error,
+        }
+
     def refresh(self) -> None:
         """Update read-only text. Main thread."""
         if self._readout is None:
+            return
+        if self._locked_control is not None and self._locked_control.value != (self.locked or "free"):
+            self._locked_control.value = self.locked or "free"
+        if self._render_error:
+            self._readout.value = f"Photoreal view stopped: {self._render_error}"
             return
         if self.mode != RTX:
             reason = self._note or (self._why if not self.backend else "switched off")
@@ -622,5 +657,6 @@ class PanelRenderView(Panel):
             self.server.scene.remove_click_callback(self._on_click)
             self._listening = False
         self._release()
-        self._restore()
+        if not self.require_photoreal:
+            self._restore()
         super().close()

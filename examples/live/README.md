@@ -24,8 +24,8 @@ claude --permission-mode acceptEdits        # Claude Code; edits go through with
 codex -a on-request -s workspace-write      # or Codex; the sandbox may write here and reach the socket
 ```
 
-The page opens on a shared tabletop: a Panda arm, red cube, blue cloth, orange
-cable, purple soft block and a target pad. On a remote GPU
+The page opens on a shared tabletop with two YAM arms, two cubes, exchange and
+destination pads, cloth, cable and a soft block. On a remote GPU
 box, pick an idle card with `CUDA_VISIBLE_DEVICES` and use `--share` or an SSH
 tunnel (`ssh -L 8080:localhost:8080 <box>`). The page listens on all interfaces
 (viser's default), so on a shared network firewall the port or use the tunnel.
@@ -55,16 +55,27 @@ sampled geometry, solver ownership and routine outcomes. It does not receive
 camera images. Its source edits rebuild and reset the scene; the page keeps
 the current viewpoint and drawer layout while the replacement arrives.
 
-The scene uses Newton's two-way proxy coupling between MuJoCo for the robot
-and VBD for the cube, cable, cloth and soft block. Pushing and cable bending
-are available; reliable cloth pinching and cube lifting require a different
-setup. The `CAPABILITIES` dictionary records these limits for the agent. The
-included `poke` routine is an unsuccessful experiment: it moved the soft block
-but did not meet its compression check. Retaining failed checks makes that
-limitation inspectable rather than presenting every routine as a success.
-In the recorded follow-up, the model added `nudge_cable` and moved the cable
-55.6 mm sideways while all four objects stayed on the bench. Chord shortening
-was 0.0 mm: this demonstrated sliding, with no measurable bending.
+The current workbench has two YAM arms, two rigid blocks, a central exchange
+pad, destination pads, cloth, cable and foam. The arms and rigid blocks share
+MuJoCo's native contacts, allowing friction grasps and lifts. Cloth, cable and
+foam share a VBD island with Newton's two-way proxy coupling to MuJoCo.
+Cloth pinching remains unsupported under that coupling. `CAPABILITIES` and
+the live observations describe the available contact behavior to the agent.
+
+The checked-in `handoff` and `reverse_handoff` routines were authored and
+repaired by MiMo through this chat. The first passes the red cube from left to
+right via the exchange pad; the second passes the teal cube in the opposite
+direction. Both measure each lift, exchange placement, final placement and
+resting drift from simulated object positions. For a repeatable demonstration,
+start from a reset scene and ask for the red handoff, then the teal handoff.
+Neither routine needs a scene edit between runs.
+
+The live page starts in photoreal RTX mode with editing overlays hidden.
+OVRTX and an RTX-capable GPU are required for this view. It keeps the last
+rendered image while rebuilding and preserves the camera and render settings.
+A renderer failure reports an error and retains the last frame; it does not
+switch to collider or browser rendering. The recorder waits for actual RTX
+frames before marking a take ready and rejects a failed renderer.
 
 The default provider is `XiaomiMiMo/MiMo-V2.6-Pro-RL:novita`. Pricing is fetched
 at startup. Before each request, the server reserves a conservative allowance

@@ -49,9 +49,9 @@ scene.add(rss.robot("yam_i2rt"))  # a scene needs something that moves before it
 | Command | Does |
 | --- | --- |
 | `up [--port N] [--scene F] [--share]` | Start a server on the file, wait for the page, and print its URL (the next free port if N is busy). With a page already up, names it; refuses if that page is on another scene file or lacks a requested `--share`. |
-| `status` | What is loaded, the names in it and where they are, the last error, the page's address. |
+| `status` | What is loaded, the names in it and where they are, the last error, the page's address, and actual renderer readiness, dimensions and delivered frame rate. |
 | `reload` | Rebuild now. Saving the file does this too. |
-| `snapshot [--camera N] [--beside REF] [--eye x,y,z --look-at x,y,z] [--size WxH] [--note TEXT]` | A path-traced PNG of the current state, with a reference picture beside it. A snapshot draws the room, the mat and the textures; the page draws only the bench and what you added. |
+| `snapshot [--camera N] [--beside REF] [--eye x,y,z --look-at x,y,z] [--size WxH] [--note TEXT]` | A path-traced PNG of the current state, with a reference picture beside it. The live page also uses RTX to draw the room, materials and shadows. |
 | `ref frames CLIP [--at 0:closed,4.5:lid_open,end] [--every S]` | Stills out of a clip at those seconds, a contact sheet with the seconds burnt in, and `ref/timeline.json` anchoring them. |
 | `compare [--ref PHOTO] [--camera N] --key NAME=HOW ... [--note TEXT]` | The scene against the photograph: the pair at full size, per keyed thing its size, offset and overlap, and a look sheet. |
 | `compare --take NAME --key ...` | A recorded take against the clip's timeline: each anchor, and what moved in each. |

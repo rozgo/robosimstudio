@@ -45,9 +45,18 @@ class RebuildPresentation(unittest.TestCase):
         session.env = object()
         session.config = StudioConfig(live=True, live_frustums=True)
         session.live = SimpleNamespace(live=False, show_frustums=False)
+        session.render_view = SimpleNamespace(
+            mode="rtx",
+            scale=0.75,
+            passes=(2, 8),
+            clean=True,
+            locked="demo",
+            require_photoreal=True,
+            _hide_model=mock.Mock(),
+        )
         session.server = mock.MagicMock()
         session.draw = mock.Mock()
-        sim = mock.Mock()
+        sim = mock.Mock(cameras=[SimpleNamespace(name="demo")])
         order = []
         session.server.atomic.return_value.__enter__.side_effect = lambda: order.append("begin")
         session.server.atomic.return_value.__exit__.side_effect = lambda *_: order.append("end")
@@ -57,6 +66,12 @@ class RebuildPresentation(unittest.TestCase):
             session.adopt(sim)
         self.assertFalse(session.config.live)
         self.assertFalse(session.config.live_frustums)
+        self.assertTrue(session.config.world_model)
+        self.assertEqual(session.config.render_view_scale, 0.75)
+        self.assertEqual(session.config.render_view_passes, (2, 8))
+        self.assertTrue(session.config.render_view_clean)
+        self.assertEqual(session.render_view.locked, "demo")
+        session.render_view._hide_model.assert_called_once()
         self.assertEqual(order, ["begin", "adopt", "sync", "draw", "end"])
         # An existing user's viewpoint is untouched by scene changes.
         self.assertEqual(session.server.initial_camera.mock_calls, [])

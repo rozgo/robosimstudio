@@ -14,6 +14,25 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 from recording.page import CURSOR_JS, GPU_ARGS, HELPER_JS
 
+from robosimstudio_real2sim_agent.wire import request
+
+SOCKET = Path(__file__).resolve().parents[1] / "examples/live/run/ctl.sock"
+
+
+def photoreal_status():
+    try:
+        status = request(SOCKET, {"cmd": "status"}, timeout=2)
+    except TimeoutError:
+        # Rebuilds hold the sim thread while the browser retains its last RTX
+        # frame. The readiness deadline below still bounds this wait.
+        return {"ready": False, "building": True}
+    if not status.get("ok") and "busy" in status.get("error", ""):
+        return {"ready": False, "building": True}
+    view = status.get("render", {})
+    if view.get("mode") != "rtx" or view.get("backend") != "rtx" or view.get("error"):
+        raise RuntimeError(f"Recording requires a working photoreal viewport: {view}")
+    return view
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -53,7 +72,13 @@ def main():
         collapse = frame.get_by_role("button", name="Collapse panel area", exact=True)
         if collapse.is_visible():
             collapse.click()
+        deadline = time.monotonic() + 180
+        while not photoreal_status().get("ready"):
+            if time.monotonic() > deadline:
+                raise TimeoutError("Photoreal viewport did not become ready; no demo was recorded.")
+            page.wait_for_timeout(500)
         page.wait_for_timeout(2000)
+        view = photoreal_status()
         start = time.monotonic()
         page.screenshot(path=str(out / "start.png"))
         (out / "ready.json").write_text(
@@ -62,6 +87,7 @@ def main():
                     "url": args.url,
                     "cdp_port": args.cdp_port,
                     "renderer": renderer,
+                    "photoreal": view,
                     "created_monotonic": created,
                     "ready_monotonic": start,
                 }
@@ -69,8 +95,13 @@ def main():
         )
         print(f"Recording; interact through {args.url}. Touch {out / 'stop-recording'} to finish.", flush=True)
         try:
+            last_ready = time.monotonic()
             while not (out / "stop-recording").exists():
                 page.wait_for_timeout(500)
+                if photoreal_status().get("ready"):
+                    last_ready = time.monotonic()
+                elif time.monotonic() - last_ready > 180:
+                    raise TimeoutError("Photoreal viewport stopped delivering frames.")
         finally:
             ended = time.monotonic()
             marker = out / "operator-start.json"

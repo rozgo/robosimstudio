@@ -1,401 +1,388 @@
 # SPDX-License-Identifier: Apache-2.0
-"""One shared table: rigid cube, cloth, cable and soft block for the chat agent."""
+"""Two physical arms share a workbench; the chat agent writes their cooperation."""
 
 import numpy as np
 
 import robosimstudio as rss
-from robosimstudio_studio.routine import grip, hand, reach, wait
+from robosimstudio.core.render.finish import Finish
+from robosimstudio.core.render.room import HANGAR_CLOSED, LAB_GRID_MAT
+from robosimstudio_studio.routine import grip, reach
 
 CELL = "bench_075"
 ORIGIN = np.array(rss.get_cell(CELL).surface_frame[:3])
-TARGET_Y = -0.18
-TARGET_COLOR = (0.93, 0.60, 0.08)
-PUSH_SPEED = 0.04
-DROP_SPEED = 0.07
-BENCH_EDGE_X = 0.3025  # world X of the bench's -X edge (0.6 - 0.2975)
-DIRECTION = 1 if TARGET_Y > 0 else -1
-CUBE_START = (-0.15, 0.0, 0.026)
-TARGET = np.array([-0.15, TARGET_Y, 0.0]) + ORIGIN
 DOWN = (0.0, 1.0, 0.0, 0.0)
-settle_positions = []
-drop_positions = []
-poke_data = {}
-cable_data = {}
-
-# Two Newton solver islands: the articulated arm on MuJoCo; free bodies,
-# cable capsules, cloth and soft particles together on VBD. The proxy coupler
-# exchanges forces. This supports pushing; it is not a cloth-pinch setup.
+# The arms AND graspable rigid objects share MuJoCo's native finger contacts.
+# Cloth, cable and foam retain two-way VBD coupling; no grasp latches or pins.
+rigid = rss.backend("mujoco", nconmax=512, njmax=512, enable_multiccd=True)
 physics = rss.replace(
     rss.GENERIC,
     backends=(
-        ("articulated", rss.backend("mujoco")),
+        ("articulated", rigid),
+        ("rigid", rigid),
         ("*", rss.backend("vbd", rigid_body_contact_buffer_size=256, rigid_contact_history=True)),
     ),
     collision=rss.CollisionSpec(contact_matching="sticky"),
 )
 CAPABILITIES = {
-    "cube": "Red rigid cube: push with robot contact; target pad remains available.",
-    "cloth": "Blue cloth: push or drape; proxy coupling does not support a reliable friction pinch.",
-    "cable": "Orange capsule-chain rope: bend or sweep by contact; grasp latches are disabled.",
-    "soft_block": "Purple VBD tetrahedral block: deforms on contact; strong compression is limited.",
+    "arms": "Two YAM robots named left (positive Y) and right (negative Y). Both can reach the centre.",
+    "cube": "Red 40 mm cube on MuJoCo: physical friction grasp, lift, carry and place. Start world (0.52, 0.24, 0.773).",
+    "teal_cube": "Teal 40 mm cube on MuJoCo. Start world (0.64, -0.25, 0.773).",
+    "exchange": "Shared table handoff zone centred world (0.52, 0.0, 0.75). Place down and withdraw before the other arm approaches.",
+    "targets": "Right amber pad centre (0.52, -0.26, 0.75); left silver pad centre (0.64, 0.26, 0.75).",
+    "cloth": "Contact-only VBD cloth; no reliable pinch under proxy coupling.",
+    "cable": "Contact-only VBD rope; bend or sweep, no latch.",
+    "soft_block": "VBD foam; contact deformation, limited compression.",
+    "helpers": "drive(sim,session,motion()) drains BOTH arms and steps once per yield. together(*generators) moves arms concurrently. reach's default tolerance is 6 mm; physical checks must use measured object positions. DOWN points the gripper toward the table.",
 }
-scene = rss.Scene(cell=CELL, name="shared_table", physics=physics)
-scene.add(rss.robot("panda"))
-scene.add(
-    rss.CameraSpec(
-        name="demo",
-        eye=(1.80, 0.75, 1.85),
-        look_at=(0.42, 0.0, 0.94),
-        width=1280,
-        height=720,
-        fov_y=42,
+scene = rss.Scene(cell=CELL, name="cooperative_workbench", physics=physics, render=HANGAR_CLOSED)
+scene.add(rss.robot("yam_bimanual"))
+for side, y in (("left", 0.31), ("right", -0.31)):
+    scene.add(
+        rss.slab(
+            name=f"{side}_pedestal",
+            half=(0.07, 0.09, 0.386),
+            at=(-0.3475, y, -0.364),
+            collide=False,
+            color=(0.28, 0.30, 0.32),
+            finish=Finish(roughness=0.36, metallic=0.85),
+        )
     )
-)
-
 scene.add(
-    rss.box(
-        name="cube",
-        half=(0.025,) * 3,
-        at=CUBE_START,
-        mass=0.08,
-        friction=0.45,
-        color=(0.88, 0.12, 0.12),
-    )
+    rss.CameraSpec(name="demo", eye=(1.65, 1.10, 1.75), look_at=(0.48, 0.0, 0.89), width=1600, height=1000, fov_y=43)
 )
 scene.add(
     rss.slab(
-        name="target",
-        half=(0.065, 0.065, 0.0003),
-        at=(-0.15, TARGET_Y, 0.0004),
+        name="work_mat",
+        half=(0.293, 0.645, 0.00025),
+        at=(0, 0, 0.0003),
         collide=False,
-        color=TARGET_COLOR,
+        color=(0.30, 0.32, 0.34),
+        finish=LAB_GRID_MAT,
     )
 )
 scene.add(
+    rss.box(
+        name="cube",
+        half=(0.02,) * 3,
+        at=(-0.08, 0.24, 0.023),
+        mass=0.05,
+        friction=0.9,
+        color=(0.70, 0.075, 0.045),
+        finish=Finish(roughness=0.3),
+    )
+)
+scene.add(
+    rss.box(
+        name="teal_cube",
+        half=(0.02,) * 3,
+        at=(0.04, -0.25, 0.023),
+        mass=0.05,
+        friction=0.9,
+        color=(0.025, 0.38, 0.34),
+        finish=Finish(roughness=0.3),
+    )
+)
+for name, at, color in (
+    ("exchange", (-0.08, 0.0, 0.0006), (0.25, 0.31, 0.36)),
+    ("right_target", (-0.08, -0.26, 0.0006), (0.80, 0.47, 0.10)),
+    ("left_target", (0.04, 0.26, 0.0006), (0.62, 0.67, 0.70)),
+):
+    scene.add(
+        rss.slab(
+            name=name,
+            half=(0.055, 0.055, 0.00025),
+            at=at,
+            collide=False,
+            color=color,
+            finish=Finish(roughness=0.38, metallic=0.65),
+        )
+    )
+scene.add(
     rss.sheet(
         name="cloth",
-        size=(0.22, 0.24),
-        cells=(16, 18),
-        at=(-0.22, 0.17, 0.012),
+        size=(0.13, 0.16),
+        cells=(12, 14),
+        at=(0.13, 0.32, 0.012),
         material=rss.materials.TERRY_TOWELLING,
-        color=(0.10, 0.55, 0.86),
+        color=(0.55, 0.61, 0.63),
         settle_frames=30,
     )
 )
 scene.add(
     rss.rod(
         name="cable",
-        length=0.34,
-        radius=0.009,
+        length=0.27,
+        radius=0.007,
         segments=16,
-        at=(0.08, -0.45, 0.016),
-        along=(0.0, 1.0, 0.0),
-        color=(1.0, 0.38, 0.06),
+        at=(0.19, -0.25, 0.016),
+        along=(0, 1, 0),
+        color=(0.78, 0.31, 0.055),
         allow_grasp_latch=False,
         filter_fingertip_scenery=False,
-        scene_friction=False,  # keep the other objects' own friction values
+        scene_friction=False,
     )
 )
 scene.add(
     rss.SoftSpec(
         name="soft_block",
-        size=(0.09, 0.07, 0.045),
-        cells=(6, 5, 3),
-        pose=(0.14, 0.08, 0.006),
-        color=(0.60, 0.24, 0.78),
+        size=(0.075, 0.06, 0.04),
+        cells=(5, 4, 3),
+        pose=(0.12, -0.48, 0.006),
+        color=(0.32, 0.21, 0.37),
         settle_frames=30,
     )
 )
 
 
-def outcome(sim):
-    """Measure the cube after the physical push, in metres and metres/second."""
-    position = np.array(sim["cube"].position)
-    error = float(np.linalg.norm(position[:2] - TARGET[:2]))
-    speed = float(np.linalg.norm(sim["cube"].velocity[:3]))
-    # Contact solvers can report a nonzero instantaneous velocity while a
-    # resting cube stays within a fraction of a millimetre. Measure the actual
-    # positions throughout the final 0.6 s, as the live page's rest gate does.
-    drift = float(np.linalg.norm(np.ptp(settle_positions, axis=0))) if len(settle_positions) >= 25 else None
-    return {
-        "cube": position.tolist(),
-        "target": TARGET.tolist(),
-        "error_mm": round(1000 * error, 1),
-        "speed_mm_s": round(1000 * speed, 1),
-        "drift_mm": round(1000 * drift, 3) if drift is not None else None,
-        "passed": error < 0.035 and drift is not None and drift < 0.002,
-    }
+def together(*motions):
+    """Advance independent arm motions in one shared control step."""
+    active = list(motions)
+    while active:
+        active = [motion for motion in active if next(motion, False) is not False]
+        if active:
+            yield
 
 
-def drop_outcome(sim):
-    """Measure the cube after the drop attempt, in metres above the ground."""
-    position = np.array(sim["cube"].position)
-    speed = float(np.linalg.norm(sim["cube"].velocity[:3]))
-    off_bench = bool(abs(position[0] - 0.6) > 0.2975 or abs(position[1]) > 0.65)
-    fell = bool(position[2] < ORIGIN[2] - 0.10 and off_bench)
-    drift = float(np.linalg.norm(np.ptp(drop_positions, axis=0))) if len(drop_positions) >= 25 else None
-    return {
-        "cube": [float(v) for v in position],
-        "height_mm_above_ground": float(round(float(1000 * position[2]), 1)),
-        "drop_mm_below_surface": float(round(float(1000 * (ORIGIN[2] - position[2])), 1)),
-        "off_bench": bool(off_bench),
-        "speed_mm_s": float(round(1000 * speed, 1)),
-        "drift_mm": float(round(1000 * drift, 3)) if drift is not None else None,
-        "passed": bool(fell),
-    }
+def drive(sim, session, motion):
+    """Execute a model-authored generator through both arms' normal IK controls."""
+    paused = session.paused
+    session.set_paused(False)
+    try:
+        for _ in motion:
+            for panel in session.arms.values():
+                panel.drain()
+            sim.step_teleop()
+            yield
+    finally:
+        session.set_paused(paused)
 
 
-def _particle_points(sim, name):
-    """Return the (N, 3) particle positions of a cloth or soft body."""
-    q = sim[name].particle_q
-    if hasattr(q, "detach"):
-        q = q.detach().cpu().numpy()
-    arr = np.asarray(q)
-    return np.ascontiguousarray(arr.reshape(-1, arr.shape[-1])[:, :3], dtype=float)
+M = {}
 
 
-def _cable_points(sim):
-    """Return all capsule centres of the cable."""
-    q = sim.state.body_q
-    if hasattr(q, "numpy"):
-        q = q.numpy()
-    arr = np.asarray(q)
-    bodies = sim["cable"].bodies
-    rows = arr[bodies] if isinstance(bodies, slice) else arr[[int(b) for b in bodies]]
-    return np.ascontiguousarray(rows[:, :3], dtype=float)
+def _cmd(ret):
+    """Advance a helper motion if it is a generator; otherwise hold one control step."""
+    if hasattr(ret, "__iter__") or hasattr(ret, "__next__"):
+        yield from ret
+    else:
+        yield
 
 
-def _on_table(pts):
-    """True when every point stays over the bench top (footprint 0.2975 x 0.65)."""
-    pts = np.asarray(pts, dtype=float)
-    return bool(
-        np.all(np.abs(pts[:, 0] - 0.6) <= 0.3025) and np.all(np.abs(pts[:, 1]) <= 0.655) and np.all(pts[:, 2] >= 0.745)
+def _cube(sim):
+    return np.asarray(sim["cube"].position, dtype=float)
+
+
+def _handoff_motion(sim, session):
+    M.clear()
+    down = DOWN
+    cx, cy = 0.52, 0.24  # red cube start (world)
+    ex, ey = 0.52, 0.0  # exchange pad centre (world)
+    ax, ay = 0.52, -0.26  # amber pad centre (world)
+    grasp_z, carry_z = 0.782, 0.86
+
+    # ---- left arm: grasp, lift, carry to exchange, set down, clear ----
+    yield from _cmd(grip(session, "left", 0.0))
+    yield from _cmd(reach(session, "left", (cx, cy, 0.90), down, speed=0.25))
+    yield from _cmd(reach(session, "left", (cx, cy, grasp_z), down, speed=0.06))
+    yield from _cmd(grip(session, "left", 1.0))
+    yield from _cmd(reach(session, "left", (cx, cy, grasp_z + 0.008), down, speed=0.012))
+    p = _cube(sim)
+    M["z_before_left_lift_mm"] = float(p[2] * 1000.0)
+    yield from _cmd(reach(session, "left", (cx, cy, carry_z), down, speed=0.12))
+    p = _cube(sim)
+    M["left_lift_mm"] = float(p[2] * 1000.0 - M["z_before_left_lift_mm"])
+    yield from _cmd(reach(session, "left", (ex, ey, carry_z), down, speed=0.20))
+    yield from _cmd(reach(session, "left", (ex, ey, grasp_z), down, speed=0.05))
+    yield from _cmd(grip(session, "left", 0.0))
+    yield from _cmd(reach(session, "left", (ex, ey, grasp_z + 0.016), down, speed=0.015))
+    p = _cube(sim)
+    M["exchange_error_mm"] = float(np.hypot(p[0] - ex, p[1] - ey) * 1000.0)
+    M["exchange_cube"] = [float(v) for v in p]
+    yield from _cmd(reach(session, "left", (ex, ey, 0.88), down, speed=0.10))
+    yield from _cmd(reach(session, "left", (0.58, 0.18, 0.88), down, speed=0.20))
+    yield from _cmd(reach(session, "left", (0.62, 0.31, 0.92), down, speed=0.15))
+
+    # ---- right arm: pick from exchange, place on amber pad ----
+    yield from _cmd(grip(session, "right", 0.0))
+    yield from _cmd(reach(session, "right", (ex, ey, 0.90), down, speed=0.25))
+    yield from _cmd(reach(session, "right", (ex, ey, grasp_z), down, speed=0.06))
+    yield from _cmd(grip(session, "right", 1.0))
+    yield from _cmd(reach(session, "right", (ex, ey, grasp_z + 0.008), down, speed=0.012))
+    p = _cube(sim)
+    M["z_before_right_lift_mm"] = float(p[2] * 1000.0)
+    yield from _cmd(reach(session, "right", (ex, ey, carry_z), down, speed=0.12))
+    p = _cube(sim)
+    M["right_lift_mm"] = float(p[2] * 1000.0 - M["z_before_right_lift_mm"])
+    yield from _cmd(reach(session, "right", (ax, ay, carry_z), down, speed=0.20))
+    yield from _cmd(reach(session, "right", (ax, ay, grasp_z), down, speed=0.05))
+    yield from _cmd(grip(session, "right", 0.0))
+    yield from _cmd(reach(session, "right", (ax, ay, grasp_z + 0.016), down, speed=0.015))
+    p = _cube(sim)
+    M["release_cube"] = [float(v) for v in p]
+    p0 = _cube(sim)
+    for _ in range(30):
+        yield
+    p1 = _cube(sim)
+    M["rest_drift_mm"] = float(np.linalg.norm(p1 - p0) * 1000.0)
+    M["final_cube"] = [float(v) for v in p1]
+    yield from _cmd(reach(session, "right", (ax, ay, 0.88), down, speed=0.10))
+    yield from _cmd(reach(session, "right", (0.58, -0.18, 0.88), down, speed=0.20))
+    yield from _cmd(reach(session, "right", (0.62, -0.31, 0.92), down, speed=0.15))
+
+
+def _resolve(*args, **kw):
+    """Locate sim and session from however the runner invokes the routine."""
+    args = [a for a in args if a is not None]
+    sim = kw.get("sim")
+    session = kw.get("session")
+    if len(args) >= 2:
+        if sim is None:
+            sim = args[0]
+        if session is None:
+            session = args[1]
+        args = args[2:]
+    for a in args + [v for k, v in kw.items() if k not in ("sim", "session")]:
+        if a is None:
+            continue
+        if session is None and hasattr(a, "arms") and hasattr(a, "set_paused"):
+            session = a
+        elif sim is None and (hasattr(a, "step_teleop") or hasattr(a, "state")):
+            sim = a
+        elif session is None and hasattr(a, "arms"):
+            session = a
+        elif sim is None:
+            sim = a
+    if session is None:
+        session = globals().get("session")
+    if sim is None:
+        sim = globals().get("sim")
+    if sim is None and session is not None:
+        sim = getattr(session, "sim", None) or (session if hasattr(session, "step_teleop") else None)
+    if session is None and sim is not None:
+        session = getattr(sim, "session", None) or (sim if hasattr(sim, "arms") else None)
+    if sim is None or session is None:
+        raise TypeError(f"handoff could not resolve sim/session from args={args!r} kw={list(kw)!r}")
+    return sim, session
+
+
+def handoff(sim=None, session=None, *extra, **kw):
+    """Left arm hands the red cube over at the exchange pad; right arm finishes on the amber pad."""
+    sim, session = _resolve(*[a for a in (sim, session, *extra) if a is not None], **kw)
+    yield from drive(sim, session, _handoff_motion(sim, session))
+
+
+def handoff_outcome(sim):
+    p = np.asarray(sim["cube"].position, dtype=float)
+    final_error = float(np.hypot(p[0] - 0.52, p[1] + 0.26) * 1000.0)
+    left_lift = float(M.get("left_lift_mm", 0.0))
+    right_lift = float(M.get("right_lift_mm", 0.0))
+    exch = float(M.get("exchange_error_mm", 999.0))
+    drift = float(M.get("rest_drift_mm", 999.0))
+    on_table = bool(0.74 < float(p[2]) < 0.80)
+    passed = bool(
+        left_lift > 15.0 and right_lift > 15.0 and exch < 30.0 and final_error < 35.0 and on_table and drift < 2.0
     )
-
-
-def poke_outcome(sim):
-    """Measure the soft block's vertical compression and recovery, in mm."""
-    soft = _particle_points(sim, "soft_block")
-    start = poke_data.get("initial")
-    if start is None or start.shape != soft.shape:
-        return {"passed": False, "error": "Run poke to record the starting particle positions."}
-    pressed = poke_data.get("pressed") or []
-    on_table = {
-        "cube": _on_table(np.array(sim["cube"].position).reshape(1, 3)),
-        "cloth": _on_table(_particle_points(sim, "cloth")),
-        "cable": _on_table(_cable_points(sim)),
-        "soft_block": _on_table(soft),
-    }
-    z0 = float(start[:, 2].max())
-    h0 = float(start[:, 2].max() - start[:, 2].min())
-    depth = max(0.0, z0 - min(float(p[:, 2].max()) for p in pressed)) if pressed else 0.0
-    h1 = float(soft[:, 2].max() - soft[:, 2].min())
-    residual = max(0.0, z0 - float(soft[:, 2].max()))
-    slide = float(np.linalg.norm(soft[:, :2].mean(axis=0) - start[:, :2].mean(axis=0)))
-    all_ok = all(on_table.values())
     return {
-        "soft_block_centroid": [float(v) for v in soft.mean(axis=0)],
-        "height_before_mm": float(round(1000 * h0, 1)),
-        "peak_compression_mm": float(round(1000 * depth, 1)),
-        "height_after_mm": float(round(1000 * h1, 1)),
-        "residual_indent_mm": float(round(1000 * residual, 1)),
-        "slide_mm": float(round(1000 * slide, 1)),
-        "on_table": {k: bool(v) for k, v in on_table.items()},
-        "all_on_table": bool(all_ok),
-        "passed": bool(depth > 0.002 and all_ok and slide < 0.025),
+        "left_lift_mm": left_lift,
+        "right_lift_mm": right_lift,
+        "exchange_error_mm": exch,
+        "final_error_mm": final_error,
+        "final_cube": [float(v) for v in p],
+        "rest_drift_mm": drift,
+        "on_table": on_table,
+        "passed": passed,
     }
 
 
-def push(sim, session):
-    """Move the closed hand behind the cube, push it, and withdraw."""
-    arm = next(iter(session.arms))
-    panel = session.arms[arm]
-    side = np.array([0.0, float(DIRECTION), 0.0])
-    settle_positions.clear()
+def _reverse_motion(sim, session):
+    M.clear()
+    down = DOWN
+    tx, ty = 0.64, -0.25  # teal cube start (world)
+    ex, ey = 0.52, 0.0  # exchange pad centre (world)
+    sx, sy = 0.64, 0.26  # silver pad centre (world)
+    grasp_z, carry_z = 0.782, 0.86
 
-    def motion():
-        yield from wait(session, 0.4)
-        start = np.array(sim["cube"].position)
-        behind = start - side * 0.095
-        behind[2] = ORIGIN[2] + 0.030
-        above = behind + np.array([0.0, 0.0, 0.15])
-        yield from grip(session, arm, 1.0, 0.3)
-        yield from reach(session, arm, above, DOWN, speed=0.20)
-        yield from reach(session, arm, behind, DOWN, speed=0.10)
-        end = TARGET - side * 0.043
-        end[2] = behind[2]
-        yield from reach(session, arm, end, DOWN, speed=PUSH_SPEED)
-        yield from reach(session, arm, end - side * 0.04, DOWN, speed=0.12)
-        yield from reach(session, arm, hand(session, arm)[0] + np.array([0, 0, 0.15]), speed=0.18)
-        yield from reach(session, arm, *panel.ik.home_pose, speed=0.20)
-        for _ in wait(session, 0.6):
-            yield
-            settle_positions.append(np.array(sim["cube"].position))
+    def _teal(sim):
+        return np.asarray(sim["teal_cube"].position, dtype=float)
 
-    # Live-page generators own their control steps; the normal page's arm
-    # helpers only yield, so drain their commands and take one physics step.
-    was_paused = session.paused
-    session.set_paused(False)
-    try:
-        for _ in motion():
-            panel.drain()
-            sim.step_teleop()
-            yield
-    finally:
-        session.set_paused(was_paused)
-    result = outcome(sim)
-    print(f"Push result: {result}", flush=True)
-    if not result["passed"]:
-        raise RuntimeError(f"Cube missed its target: {result}")
+    # ---- right arm: grasp teal cube, lift, carry to exchange, set down, clear ----
+    yield from _cmd(grip(session, "right", 0.0))
+    yield from _cmd(reach(session, "right", (tx, ty, 0.90), down, speed=0.25))
+    yield from _cmd(reach(session, "right", (tx, ty, grasp_z), down, speed=0.06))
+    yield from _cmd(grip(session, "right", 1.0))
+    yield from _cmd(reach(session, "right", (tx, ty, grasp_z + 0.008), down, speed=0.012))
+    p = _teal(sim)
+    M["z_before_right_lift_mm"] = float(p[2] * 1000.0)
+    yield from _cmd(reach(session, "right", (tx, ty, carry_z), down, speed=0.12))
+    p = _teal(sim)
+    M["right_lift_mm"] = float(p[2] * 1000.0 - M["z_before_right_lift_mm"])
+    yield from _cmd(reach(session, "right", (ex, ey, carry_z), down, speed=0.20))
+    yield from _cmd(reach(session, "right", (ex, ey, grasp_z), down, speed=0.05))
+    yield from _cmd(grip(session, "right", 0.0))
+    yield from _cmd(reach(session, "right", (ex, ey, grasp_z + 0.016), down, speed=0.015))
+    p = _teal(sim)
+    M["exchange_error_mm"] = float(np.hypot(p[0] - ex, p[1] - ey) * 1000.0)
+    M["exchange_cube"] = [float(v) for v in p]
+    yield from _cmd(reach(session, "right", (ex, ey, 0.88), down, speed=0.10))
+    yield from _cmd(reach(session, "right", (0.58, -0.18, 0.88), down, speed=0.20))
+    yield from _cmd(reach(session, "right", (0.62, -0.31, 0.92), down, speed=0.15))
 
-
-def drop(sim, session):
-    """Push the cube along -X until it clears the bench edge and falls off."""
-    arm = next(iter(session.arms))
-    panel = session.arms[arm]
-    side = np.array([-1.0, 0.0, 0.0])
-    drop_positions.clear()
-
-    def motion():
-        yield from wait(session, 0.4)
-        start = np.array(sim["cube"].position)
-        behind = start - side * 0.095
-        behind[2] = ORIGIN[2] + 0.030
-        above = behind + np.array([0.0, 0.0, 0.15])
-        yield from grip(session, arm, 1.0, 0.3)
-        yield from reach(session, arm, above, DOWN, speed=0.20)
-        yield from reach(session, arm, behind, DOWN, speed=0.10)
-        # Sweep the hand well past the bench edge so the cube is driven clear
-        # of the lip and tips off instead of stopping on it.
-        end = np.array([BENCH_EDGE_X - 0.075, start[1], behind[2]])
-        yield from reach(session, arm, end, DOWN, speed=DROP_SPEED)
-        yield from reach(session, arm, end + side * 0.05, DOWN, speed=0.12)
-        yield from reach(session, arm, hand(session, arm)[0] + np.array([0, 0, 0.20]), speed=0.18)
-        yield from reach(session, arm, *panel.ik.home_pose, speed=0.20)
-        for _ in wait(session, 0.8):
-            yield
-            drop_positions.append(np.array(sim["cube"].position))
-
-    was_paused = session.paused
-    session.set_paused(False)
-    try:
-        for _ in motion():
-            panel.drain()
-            sim.step_teleop()
-            yield
-    finally:
-        session.set_paused(was_paused)
-    result = drop_outcome(sim)
-    print(f"Drop result: {result}", flush=True)
+    # ---- left arm: pick from exchange, place on silver pad ----
+    yield from _cmd(grip(session, "left", 0.0))
+    yield from _cmd(reach(session, "left", (ex, ey, 0.90), down, speed=0.25))
+    yield from _cmd(reach(session, "left", (ex, ey, grasp_z), down, speed=0.06))
+    yield from _cmd(grip(session, "left", 1.0))
+    yield from _cmd(reach(session, "left", (ex, ey, grasp_z + 0.008), down, speed=0.012))
+    p = _teal(sim)
+    M["z_before_left_lift_mm"] = float(p[2] * 1000.0)
+    yield from _cmd(reach(session, "left", (ex, ey, carry_z), down, speed=0.12))
+    p = _teal(sim)
+    M["left_lift_mm"] = float(p[2] * 1000.0 - M["z_before_left_lift_mm"])
+    yield from _cmd(reach(session, "left", (sx, sy, carry_z), down, speed=0.20))
+    yield from _cmd(reach(session, "left", (sx, sy, grasp_z), down, speed=0.05))
+    yield from _cmd(grip(session, "left", 0.0))
+    yield from _cmd(reach(session, "left", (sx, sy, grasp_z + 0.016), down, speed=0.015))
+    p = _teal(sim)
+    M["release_cube"] = [float(v) for v in p]
+    p0 = _teal(sim)
+    for _ in range(30):
+        yield
+    p1 = _teal(sim)
+    M["rest_drift_mm"] = float(np.linalg.norm(p1 - p0) * 1000.0)
+    M["final_cube"] = [float(v) for v in p1]
+    yield from _cmd(reach(session, "left", (sx, sy, 0.88), down, speed=0.10))
+    yield from _cmd(reach(session, "left", (0.58, 0.18, 0.88), down, speed=0.20))
+    yield from _cmd(reach(session, "left", (0.62, 0.31, 0.92), down, speed=0.15))
 
 
-def poke(sim, session):
-    """Press the closed fingertip into the soft block's top face, hold, withdraw."""
-    arm = next(iter(session.arms))
-    panel = session.arms[arm]
-    pressed = []
-    poke_data.clear()
-    poke_data["pressed"] = pressed
-
-    def motion():
-        yield from wait(session, 0.4)
-        initial = _particle_points(sim, "soft_block").copy()
-        poke_data["initial"] = initial
-        top = float(initial[:, 2].max())
-        centre = initial.mean(axis=0)
-        above = np.array([centre[0], centre[1], ORIGIN[2] + 0.16])
-        press = np.array([centre[0], centre[1], top - 0.005])
-        yield from grip(session, arm, 1.0, 0.3)
-        yield from reach(session, arm, above, DOWN, speed=0.20)
-        yield from reach(session, arm, press, DOWN, speed=0.02)
-        for _ in wait(session, 0.5):
-            yield
-            pressed.append(_particle_points(sim, "soft_block").copy())
-        yield from reach(session, arm, above, DOWN, speed=0.08)
-        yield from reach(session, arm, *panel.ik.home_pose, speed=0.20)
-        for _ in wait(session, 0.8):
-            yield
-
-    was_paused = session.paused
-    session.set_paused(False)
-    try:
-        for _ in motion():
-            panel.drain()
-            sim.step_teleop()
-            yield
-    finally:
-        session.set_paused(was_paused)
-    result = poke_outcome(sim)
-    print(f"Poke result: {result}", flush=True)
+def reverse_handoff(sim, session):
+    """Right arm hands the teal cube over at the exchange pad; left arm finishes on the silver pad."""
+    sim, session = _resolve(sim, session)
+    yield from drive(sim, session, _reverse_motion(sim, session))
 
 
-def nudge_outcome(sim):
-    """Measure the cable's motion and bending from robot contact, in mm."""
-    final = _cable_points(sim)
-    start = cable_data.get("initial")
-    if start is None or np.shape(start) != np.shape(final):
-        return {"passed": False, "error": "Run nudge_cable to record the starting capsule positions."}
-    disp = np.linalg.norm(final - start, axis=1)
-    lateral = np.abs(final[:, 0] - start[:, 0])
-    chord0 = float(np.linalg.norm(start[-1] - start[0]))
-    chord1 = float(np.linalg.norm(final[-1] - final[0]))
-    on_table = {
-        "cube": _on_table(np.array(sim["cube"].position).reshape(1, 3)),
-        "cloth": _on_table(_particle_points(sim, "cloth")),
-        "cable": _on_table(_cable_points(sim)),
-        "soft_block": _on_table(_particle_points(sim, "soft_block")),
-    }
-    all_ok = bool(all(on_table.values()))
+def reverse_handoff_outcome(sim):
+    p = np.asarray(sim["teal_cube"].position, dtype=float)
+    final_error = float(np.hypot(p[0] - 0.64, p[1] - 0.26) * 1000.0)
+    right_lift = float(M.get("right_lift_mm", 0.0))
+    left_lift = float(M.get("left_lift_mm", 0.0))
+    exch = float(M.get("exchange_error_mm", 999.0))
+    drift = float(M.get("rest_drift_mm", 999.0))
+    on_table = bool(0.74 < float(p[2]) < 0.80)
+    passed = bool(
+        right_lift > 15.0 and left_lift > 15.0 and exch < 30.0 and final_error < 35.0 and on_table and drift < 2.0
+    )
     return {
-        "cable_centroid": [float(v) for v in final.mean(axis=0)],
-        "max_capsule_move_mm": float(round(1000.0 * float(disp.max()), 1)),
-        "mean_capsule_move_mm": float(round(1000.0 * float(disp.mean()), 1)),
-        "max_lateral_deflection_mm": float(round(1000.0 * float(lateral.max()), 1)),
-        "chord_shortening_mm": float(round(1000.0 * (chord0 - chord1), 1)),
-        "on_table": {k: bool(v) for k, v in on_table.items()},
-        "all_on_table": all_ok,
-        "passed": bool(float(disp.max()) > 0.005 and all_ok),
+        "right_lift_mm": right_lift,
+        "left_lift_mm": left_lift,
+        "exchange_error_mm": exch,
+        "final_error_mm": final_error,
+        "final_cube": [float(v) for v in p],
+        "rest_drift_mm": drift,
+        "on_table": on_table,
+        "passed": passed,
     }
 
 
-def nudge_cable(sim, session):
-    """Sweep the closed fist across the cable to bend it sideways, then withdraw."""
-    arm = next(iter(session.arms))
-    panel = session.arms[arm]
-    cable_data.clear()
-
-    def motion():
-        yield from wait(session, 0.4)
-        cable_data["initial"] = _cable_points(sim).copy()
-        pts = cable_data["initial"]
-        mid_y = float(pts[:, 1].mean())
-        above = np.array([0.705, mid_y, ORIGIN[2] + 0.16])
-        low = np.array([0.705, mid_y, ORIGIN[2] + 0.025])
-        end = np.array([0.635, mid_y, ORIGIN[2] + 0.025])
-        yield from grip(session, arm, 1.0, 0.3)
-        yield from reach(session, arm, above, DOWN, speed=0.20)
-        yield from reach(session, arm, low, DOWN, speed=0.05)
-        yield from reach(session, arm, end, DOWN, speed=0.03)
-        yield from reach(session, arm, end + np.array([0, 0, 0.15]), speed=0.10)
-        yield from reach(session, arm, *panel.ik.home_pose, speed=0.20)
-        for _ in wait(session, 0.6):
-            yield
-
-    was_paused = session.paused
-    session.set_paused(False)
-    try:
-        for _ in motion():
-            panel.drain()
-            sim.step_teleop()
-            yield
-    finally:
-        session.set_paused(was_paused)
-    result = nudge_outcome(sim)
-    print(f"Cable nudge result: {result}", flush=True)
-
-
-outcomes = {"push": outcome, "drop": drop_outcome, "poke": poke_outcome, "nudge_cable": nudge_outcome}
-routines = {"push": push, "drop": drop, "poke": poke, "nudge_cable": nudge_cable}
-
-if __name__ == "__main__":
-    rss.view(scene.build(control_mode="joint_position"), routines=routines)
+routines = {"handoff": handoff, "reverse_handoff": reverse_handoff}
+outcomes = {"handoff": handoff_outcome, "reverse_handoff": reverse_handoff_outcome}

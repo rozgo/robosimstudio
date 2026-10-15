@@ -56,6 +56,16 @@ class LiveSession(StudioSession):
         # hidden frustum must not flash back on whenever an agent saves a file.
         if self.live is not None:
             self.config = replace(self.config, live=self.live.live, live_frustums=self.live.show_frustums)
+        view = getattr(self, "render_view", None)
+        locked = getattr(view, "locked", "")
+        if view is not None:
+            self.config = replace(
+                self.config,
+                world_model=view.mode == "rtx",
+                render_view_scale=view.scale,
+                render_view_passes=view.passes,
+                render_view_clean=view.clean,
+            )
         # Set the opening view before new clients connect. Never move an
         # existing client's camera when the scene under it is replaced.
         if self.env is None and sim.cameras:
@@ -70,6 +80,11 @@ class LiveSession(StudioSession):
             super().adopt(sim, label=label, episode=episode)
             sim.sync()
             self.draw()
+            view = getattr(self, "render_view", None)
+            if view is not None:
+                view.locked = locked if any(c.name == locked for c in sim.cameras) else ""
+                if view.require_photoreal:
+                    view._hide_model()
 
     def steps_held(self) -> bool:
         """While a routine plays it steps the scene itself; the studio's own step would double it."""

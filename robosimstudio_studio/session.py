@@ -386,6 +386,10 @@ class StudioConfig:
     first minute looking like it has not loaded reads as broken. Ignored
     where ``ovrtx`` is not installed.
     """
+    require_photoreal: bool = False
+    """Require RTX for this viewport, retaining the last frame on a rendering failure."""
+    render_view_clean: bool = False
+    """Hide editing overlays in the rendered viewport."""
     render_view_scale: float = 0.5
     """Fraction of the viewport the path-traced frame is rendered at.
 
@@ -960,7 +964,9 @@ class StudioSession:
             world_model=config.world_model,
             scale=config.render_view_scale,
             passes=config.render_view_passes,
+            require_photoreal=config.require_photoreal,
         )
+        viewport.clean = config.render_view_clean
         if self._wants("camera") and config.cameras and env.cameras:
             self.live = PanelCamera(
                 self,

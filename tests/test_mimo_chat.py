@@ -301,6 +301,18 @@ class TestObservationTransport(unittest.TestCase):
         self.assertEqual(result["measurement_error"], "Invalid measurement")
         self.assertEqual(agent.ctl.call_args_list, [mock.call("play", name="drop"), mock.call("status")])
 
+    def test_aborted_routine_retains_partial_measurements_without_claiming_completion(self):
+        agent = Agent.__new__(Agent)
+        agent.inspect = mock.Mock(side_effect=[{"positions": {}}, {"last_error": "unreachable waypoint"}])
+        agent.ctl = mock.Mock(side_effect=[{"ok": True}, {"playing": 0, "last_error": "unreachable waypoint"}])
+        agent.read_value = mock.Mock(return_value={"left_lift_mm": 67.2, "passed": False})
+        with mock.patch("scripts.mimo_chat.time.sleep"):
+            result = agent.dispatch("run_routine", {"name": "handoff"})
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["motion_completed"])
+        self.assertEqual(result["metrics"]["left_lift_mm"], 67.2)
+        self.assertEqual(result["after"]["last_error"], "unreachable waypoint")
+
 
 class TestSessionRestore(unittest.TestCase):
     def test_completed_tool_results_survive_and_truncated_calls_are_discarded(self):
